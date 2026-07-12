@@ -388,16 +388,26 @@ const player = {
     missileDroneFireRate: 4,
     missileDamage: 40,
     healthRegen: 1,
+    lifesteal: 0,
     chargeDamage: 0,
     chargeTime: 0,
     isCharging: false,
+    explosiveBullets: false,
+    explosiveBulletRadius: 70,
+    explosiveBulletDamage: 0,
     timeSlowActive: false,
     timeSlowTimer: 0,
     timeSlowCooldown: 0,
     teleportCooldown: 0,
     chainLightningCount: 0,
     chainLightningDamage: 25,
-    chainLightningRange: 200
+    chainLightningRange: 200,
+    empPulseTimer: 0,
+    empPulseCooldown: 3,
+    empPulseRadius: 220,
+    empPulseDuration: 1.5,
+    empPulseEffectTimer: 0,
+    empPulseEffectRadius: 0
 };
 
 let bullets = [];
@@ -428,6 +438,7 @@ const upgrades = {
     energy: { name: 'ENERGY CORE', desc: 'Increase max energy reserves', icon: '⚡', color: '#ffaa00', level: 0, maxLevel: 10, baseCost: 55, effect: () => { player.maxEnergy = 100 + upgrades.energy.level * 15; player.energy = Math.min(player.energy, player.maxEnergy); } },
     speed: { name: 'ENGINE POWER', desc: 'Increase movement speed', icon: '🚀', color: '#44ff88', level: 0, maxLevel: 8, baseCost: 80, effect: () => { player.speed = 280 + upgrades.speed.level * 30; player.boostSpeed = 500 + upgrades.speed.level * 40; } },
     damage: { name: 'WEAPON SYSTEMS', desc: 'Increase bullet damage', icon: '💥', color: '#ff8844', level: 0, maxLevel: 10, baseCost: 70, effect: () => { player.bulletDamage = 12 + upgrades.damage.level * 4; } },
+    explosiveBullets: { name: 'EXPLOSIVE BULLETS', desc: 'Bullets explode on impact and damage nearby enemies', icon: '💣', color: '#ff8844', level: 0, maxLevel: 5, baseCost: 180, effect: () => { player.explosiveBullets = upgrades.explosiveBullets.level > 0; player.explosiveBulletRadius = 70 + upgrades.explosiveBullets.level * 10; player.explosiveBulletDamage = 6 + upgrades.explosiveBullets.level * 3; } },
     fireRate: { name: 'FIRE RATE', desc: 'Reduce weapon cooldown', icon: '🔥', color: '#ff44ff', level: 0, maxLevel: 8, baseCost: 90, effect: () => { player.fireRate = 0.12 - upgrades.fireRate.level * 0.01; } },
     shieldRegen: { name: 'SHIELD REGEN', desc: 'Increase shield regeneration rate', icon: '💠', color: '#66bbff', level: 0, maxLevel: 6, baseCost: 100, effect: () => { player.shieldRegen = 5 + upgrades.shieldRegen.level * 3; } },
     energyRegen: { name: 'ENERGY REGEN', desc: 'Increase energy regeneration rate', icon: '🔋', color: '#ffdd44', level: 0, maxLevel: 6, baseCost: 85, effect: () => { player.energyRegen = 15 + upgrades.energyRegen.level * 5; } },
@@ -439,7 +450,9 @@ const upgrades = {
     piercingDroneFireRate: { name: 'PIERCING FIRE RATE', desc: 'Reduce piercing drone cooldown', icon: '⚡', color: '#ff00ff', level: 0, maxLevel: 5, baseCost: 180, effect: () => { player.piercingDroneFireRate = 7 - upgrades.piercingDroneFireRate.level * 0.8; } },
     missileDrone: { name: 'MISSILE DRONE', desc: 'Drone fires explosive missiles', icon: '🚀', color: '#ff6600', level: 0, maxLevel: 4, baseCost: 280, effect: () => { player.missileDroneCount = upgrades.missileDrone.level; player.missileDroneMissilesPerShot = 1 + upgrades.missileDrone.level; } },
     missileDroneFireRate: { name: 'MISSILE FIRE RATE', desc: 'Reduce missile drone cooldown', icon: '⚡', color: '#ff6600', level: 0, maxLevel: 5, baseCost: 200, effect: () => { player.missileDroneFireRate = 4 - upgrades.missileDroneFireRate.level * 0.5; } },
-    chainLightning: { name: 'CHAIN LIGHTNING', desc: 'Lightning jumps between enemies', icon: '⚡', color: '#00ffff', level: 0, maxLevel: 5, baseCost: 300, effect: () => { player.chainLightningCount = upgrades.chainLightning.level; player.chainLightningDamage = 25 + upgrades.chainLightning.level * 10; player.chainLightningRange = 200 + upgrades.chainLightning.level * 30; } }
+    chainLightning: { name: 'CHAIN LIGHTNING', desc: 'Lightning jumps between enemies', icon: '⚡', color: '#00ffff', level: 0, maxLevel: 5, baseCost: 300, effect: () => { player.chainLightningCount = upgrades.chainLightning.level; player.chainLightningDamage = 25 + upgrades.chainLightning.level * 10; player.chainLightningRange = 200 + upgrades.chainLightning.level * 30; } },
+    empPulse: { name: 'EMP PULSE', desc: 'Every 3s emits a shockwave that stuns nearby enemies', icon: '🌀', color: '#66ccff', level: 0, maxLevel: 5, baseCost: 220, effect: () => { player.empPulseRadius = 220 + upgrades.empPulse.level * 30; player.empPulseDuration = 1.5; } },
+    lifesteal: { name: 'LIFE DRAIN', desc: 'Heal 10% of the damage you deal', icon: '🩸', color: '#ff4466', level: 0, maxLevel: 5, baseCost: 260, effect: () => { player.lifesteal = 0.1 * upgrades.lifesteal.level; } }
 };
 
 function getUpgradeCost(key) {
@@ -1313,6 +1326,7 @@ function spawnEnemy(x, y, type, difficulty) {
         beamActive: false,
         beamAngle: 0,
         beamLength: 0,
+        stunnedTimer: 0,
         droneSpawnTimer: 0,
         sniper: d.sniper || false,
         assassin: d.assassin || false,
@@ -1354,6 +1368,29 @@ function spawnExplosion(x, y, count, color, speed, life) {
 
 function dist(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
 
+function applyLifesteal(damage) {
+    if (!player.alive || !player.lifesteal || damage <= 0) return;
+    const healAmount = damage * player.lifesteal;
+    player.health = Math.min(player.maxHealth, player.health + healAmount);
+}
+
+function triggerEmpPulse() {
+    const level = upgrades.empPulse.level;
+    if (level <= 0) return;
+    const radius = player.empPulseRadius;
+    const duration = player.empPulseDuration;
+    for (const e of enemies) {
+        if (!e.alive) continue;
+        if (dist(e, player) <= radius) {
+            e.stunnedTimer = Math.max(e.stunnedTimer || 0, duration);
+            spawnExplosion(e.x, e.y, 8, '#66ccff', 100, 0.4);
+        }
+    }
+    spawnExplosion(player.x, player.y, 24, '#66ccff', 180, 0.6);
+    player.empPulseEffectTimer = 0.45;
+    player.empPulseEffectRadius = radius;
+}
+
 function triggerChainLightning(startX, startY, jumps, damage, range) {
     let currentX = startX;
     let currentY = startY;
@@ -1375,6 +1412,7 @@ function triggerChainLightning(startX, startY, jumps, damage, range) {
         if (nearestEnemy) {
             hitEnemies.push(nearestEnemy);
             nearestEnemy.health -= damage;
+            applyLifesteal(damage);
             
             const lightning = {
                 x1: currentX, y1: currentY,
@@ -1457,6 +1495,17 @@ function updatePlayer(dt) {
         player.shieldPulseTimer -= dt;
         if (player.shieldPulseTimer <= 0) player.shieldPulseActive = false;
     }
+    if (player.empPulseEffectTimer > 0) {
+        player.empPulseEffectTimer -= dt;
+        if (player.empPulseEffectTimer <= 0) player.empPulseEffectTimer = 0;
+    }
+    if (upgrades.empPulse.level > 0) {
+        player.empPulseTimer += adjustedDt;
+        if (player.empPulseTimer >= player.empPulseCooldown) {
+            player.empPulseTimer = 0;
+            triggerEmpPulse();
+        }
+    }
     if (player.invincibleTimer > 0) player.invincibleTimer -= dt;
     if (mouseDown && shootCooldown <= 0 && player.energy >= 3) {
         shootCooldown = player.fireRate;
@@ -1523,6 +1572,16 @@ function updateEnemies(dt) {
         }
         const d = dist(e, player);
         if (d > 3000 && !player.alive) continue;
+        if (e.stunnedTimer > 0) {
+            e.stunnedTimer -= dt;
+            if (e.stunnedTimer <= 0) {
+                e.stunnedTimer = 0;
+            } else {
+                e.vx *= 0.1;
+                e.vy *= 0.1;
+                continue;
+            }
+        }
         e.stateTimer += dt;
         if (e.isBoss) {
             updateBoss(e, dt, d);
@@ -1925,6 +1984,24 @@ function updateBullets(dt) {
                     } else {
                         e.health -= b.damage;
                     }
+                    applyLifesteal(b.damage);
+                    if (player.explosiveBullets) {
+                        for (const other of enemies) {
+                            if (!other.alive || other === e) continue;
+                            if (dist(b, other) <= player.explosiveBulletRadius) {
+                                other.health -= player.explosiveBulletDamage;
+                                spawnExplosion(other.x, other.y, 4, '#ff8844', 80, 0.25);
+                                if (other.health <= 0) {
+                                    other.alive = false;
+                                    score += other.score;
+                                    kills++;
+                                    salvage += Math.floor(other.score * 0.4);
+                                    spawnExplosion(other.x, other.y, 20, other.color, 160, 0.6);
+                                }
+                            }
+                        }
+                        spawnExplosion(b.x, b.y, 10, '#ff8844', 120, 0.35);
+                    }
                     spawnExplosion(b.x, b.y, 5, '#ffaa44', 100, 0.3);
                     if (!b.piercing) {
                         bullets.splice(i, 1);
@@ -2009,6 +2086,7 @@ function updateMines(dt) {
                 if (!e.alive) continue;
                 if (dist(m, e) < m.radius) {
                     e.health -= m.damage;
+                    applyLifesteal(m.damage);
                     spawnExplosion(m.x, m.y, 40, '#ff6600', 250, 0.8);
                     spawnExplosion(m.x, m.y, 20, '#ffaa00', 180, 0.6);
                     spawnExplosion(m.x, m.y, 15, '#ffffff', 120, 0.4);
@@ -2272,7 +2350,9 @@ function updateMissiles(dt) {
                     if (!target.alive) continue;
                     if (dist(m, target) < m.explosionRadius) {
                         const damageFalloff = 1 - (dist(m, target) / m.explosionRadius) * 0.5;
-                        target.health -= m.damage * damageFalloff;
+                        const dealtDamage = m.damage * damageFalloff;
+                        target.health -= dealtDamage;
+                        applyLifesteal(dealtDamage);
                         if (target.health <= 0) {
                             target.alive = false;
                             score += target.score;
@@ -2532,6 +2612,19 @@ function drawPlayer() {
         ctx.globalAlpha = 0.08;
         ctx.fillStyle = '#4488ff';
         ctx.fill();
+        ctx.restore();
+    }
+    if (player.empPulseEffectTimer > 0) {
+        ctx.save();
+        ctx.translate(sx, sy);
+        const progress = 1 - player.empPulseEffectTimer / 0.45;
+        const pulseRadius = player.empPulseEffectRadius * progress;
+        ctx.globalAlpha = 0.35 * (1 - progress);
+        ctx.beginPath();
+        ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = '#66ccff';
+        ctx.lineWidth = 3;
+        ctx.stroke();
         ctx.restore();
     }
     if (player.isCharging && player.chargeDamage > 10) {
@@ -2813,6 +2906,16 @@ function drawEnemy(e) {
         ctx.strokeStyle = e.color;
         ctx.lineWidth = 1.5;
         ctx.stroke();
+    }
+    if (e.stunnedTimer > 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.55 + (e.stunnedTimer / 1.5) * 0.25;
+        ctx.strokeStyle = '#66ccff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, e.size + 6 + Math.sin(performance.now() / 120 + e.size) * 3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
     }
     if (e.shielded && e.shieldHP > 0) {
         ctx.globalAlpha = 0.3;
@@ -3523,9 +3626,13 @@ function initGame() {
     player.missileDroneFireRate = 4;
     player.missileDamage = 40;
     player.healthRegen = 1;
+    player.lifesteal = 0;
     player.chargeDamage = 0;
     player.chargeTime = 0;
     player.isCharging = false;
+    player.explosiveBullets = false;
+    player.explosiveBulletRadius = 70;
+    player.explosiveBulletDamage = 0;
     player.timeSlowActive = false;
     player.timeSlowTimer = 0;
     player.timeSlowCooldown = 0;
@@ -3533,6 +3640,12 @@ function initGame() {
     player.chainLightningCount = 0;
     player.chainLightningDamage = 25;
     player.chainLightningRange = 200;
+    player.empPulseTimer = 0;
+    player.empPulseCooldown = 3;
+    player.empPulseRadius = 220;
+    player.empPulseDuration = 1.5;
+    player.empPulseEffectTimer = 0;
+    player.empPulseEffectRadius = 0;
     player.alive = true; player.invincibleTimer = 2;
     player.shieldPulseTimer = 0; player.shieldPulseActive = false;
     score = 0; kills = 0; salvage = 0;

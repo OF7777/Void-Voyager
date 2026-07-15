@@ -387,6 +387,10 @@ const player = {
     missileDroneMissilesPerShot: 1,
     missileDroneFireRate: 4,
     missileDamage: 40,
+    slowingDroneCount: 0,
+    slowingDroneFireRate: 2,
+    slowingDroneSlowFactor: 0.5,
+    slowingDroneRange: 400,
     healthRegen: 1,
     lifesteal: 0,
     chargeDamage: 0,
@@ -427,6 +431,9 @@ let piercingDrones = [];
 let piercingDroneShootTimer = 0;
 let missileDrones = [];
 let missileDroneShootTimer = 0;
+let slowingDrones = [];
+let slowingDroneShootTimer = 0;
+let slowingShots = [];
 let missiles = [];
 let bossSpawned = false;
 let bossDefeatedCount = 0;
@@ -450,6 +457,7 @@ const upgrades = {
     piercingDroneFireRate: { name: 'PIERCING FIRE RATE', desc: 'Reduce piercing drone cooldown', icon: '⚡', color: '#ff00ff', level: 0, maxLevel: 5, baseCost: 180, effect: () => { player.piercingDroneFireRate = 7 - upgrades.piercingDroneFireRate.level * 0.8; } },
     missileDrone: { name: 'MISSILE DRONE', desc: 'Drone fires explosive missiles', icon: '🚀', color: '#ff6600', level: 0, maxLevel: 4, baseCost: 280, effect: () => { player.missileDroneCount = upgrades.missileDrone.level; player.missileDroneMissilesPerShot = 1 + upgrades.missileDrone.level; } },
     missileDroneFireRate: { name: 'MISSILE FIRE RATE', desc: 'Reduce missile drone cooldown', icon: '⚡', color: '#ff6600', level: 0, maxLevel: 5, baseCost: 200, effect: () => { player.missileDroneFireRate = 4 - upgrades.missileDroneFireRate.level * 0.5; } },
+    slowingDrone: { name: 'SLOWING DRONE', desc: 'Drone slows enemies every 2s (half speed)', icon: '🧊', color: '#66ccff', level: 0, maxLevel: 3, baseCost: 240, effect: () => { player.slowingDroneCount = upgrades.slowingDrone.level; player.slowingDroneFireRate = 2; player.slowingDroneRange = 400 + upgrades.slowingDrone.level * 40; } },
     chainLightning: { name: 'CHAIN LIGHTNING', desc: 'Lightning jumps between enemies', icon: '⚡', color: '#00ffff', level: 0, maxLevel: 5, baseCost: 300, effect: () => { player.chainLightningCount = upgrades.chainLightning.level; player.chainLightningDamage = 25 + upgrades.chainLightning.level * 10; player.chainLightningRange = 200 + upgrades.chainLightning.level * 30; } },
     empPulse: { name: 'EMP PULSE', desc: 'Every 3s emits a shockwave that stuns nearby enemies', icon: '🌀', color: '#66ccff', level: 0, maxLevel: 5, baseCost: 220, effect: () => { player.empPulseRadius = 220 + upgrades.empPulse.level * 30; player.empPulseDuration = 1.5; } },
     lifesteal: { name: 'LIFE DRAIN', desc: 'Heal 10% of the damage you deal', icon: '🩸', color: '#ff4466', level: 0, maxLevel: 5, baseCost: 260, effect: () => { player.lifesteal = 0.1 * upgrades.lifesteal.level; } }
@@ -1321,6 +1329,8 @@ function spawnEnemy(x, y, type, difficulty) {
         shielded: d.shielded || false,
         shieldHP: d.shielded ? 24 : 0,
         patternPhase: Math.random() * Math.PI * 2,
+        slowedTimer: 0,
+        slowedFactor: 1,
         cloakTimer: d.stealthShip ? Math.random() * 3 : 0,
         isCloaked: d.stealthShip ? true : false,
         beamActive: false,
@@ -1572,6 +1582,13 @@ function updateEnemies(dt) {
         }
         const d = dist(e, player);
         if (d > 3000 && !player.alive) continue;
+        if (e.slowedTimer > 0) {
+            e.slowedTimer -= dt;
+            if (e.slowedTimer <= 0) {
+                e.slowedTimer = 0;
+                e.slowedFactor = 1;
+            }
+        }
         if (e.stunnedTimer > 0) {
             e.stunnedTimer -= dt;
             if (e.stunnedTimer <= 0) {
@@ -1582,6 +1599,8 @@ function updateEnemies(dt) {
                 continue;
             }
         }
+        const slowFactor = e.slowedTimer > 0 ? e.slowedFactor : 1;
+        const maxSpeed = e.speed * slowFactor;
         e.stateTimer += dt;
         if (e.isBoss) {
             updateBoss(e, dt, d);
@@ -1592,20 +1611,20 @@ function updateEnemies(dt) {
         }
         if (!e.isBoss) {
             if (e.state === 'patrol') {
-                e.vx = Math.cos(e.patrolAngle) * e.speed * 0.4;
-                e.vy = Math.sin(e.patrolAngle) * e.speed * 0.4;
+                e.vx = Math.cos(e.patrolAngle) * maxSpeed * 0.4;
+                e.vy = Math.sin(e.patrolAngle) * maxSpeed * 0.4;
                 if (e.stateTimer > 3) { e.patrolAngle += (Math.random() - 0.5) * 1.5; e.stateTimer = 0; }
             } else if (e.state === 'chase') {
                 const a = Math.atan2(player.y - e.y, player.x - e.x);
                 if (e.swarm) {
-                    e.vx += Math.cos(a) * e.speed * 4 * dt;
-                    e.vy += Math.sin(a) * e.speed * 4 * dt;
+                    e.vx += Math.cos(a) * e.speed * 4 * dt * slowFactor;
+                    e.vy += Math.sin(a) * e.speed * 4 * dt * slowFactor;
                 } else if (e.formation) {
-                    e.vx += Math.cos(a) * e.speed * 2 * dt;
-                    e.vy += Math.sin(a) * e.speed * 2 * dt;
+                    e.vx += Math.cos(a) * e.speed * 2 * dt * slowFactor;
+                    e.vy += Math.sin(a) * e.speed * 2 * dt * slowFactor;
                 } else {
-                    e.vx += Math.cos(a) * e.speed * 3 * dt;
-                    e.vy += Math.sin(a) * e.speed * 3 * dt;
+                    e.vx += Math.cos(a) * e.speed * 3 * dt * slowFactor;
+                    e.vy += Math.sin(a) * e.speed * 3 * dt * slowFactor;
                 }
                 const vel = Math.sqrt(e.vx * e.vx + e.vy * e.vy);
                 if (vel > e.speed) { e.vx = (e.vx / vel) * e.speed; e.vy = (e.vy / vel) * e.speed; }
@@ -1622,34 +1641,34 @@ function updateEnemies(dt) {
                     const targetX = player.x + Math.cos(behindAngle) * 150;
                     const targetY = player.y + Math.sin(behindAngle) * 150;
                     const toTargetAngle = Math.atan2(targetY - e.y, targetX - e.x);
-                    e.vx += Math.cos(toTargetAngle) * e.speed * 4 * dt;
-                    e.vy += Math.sin(toTargetAngle) * e.speed * 4 * dt;
+                    e.vx += Math.cos(toTargetAngle) * e.speed * 4 * dt * slowFactor;
+                    e.vy += Math.sin(toTargetAngle) * e.speed * 4 * dt * slowFactor;
                 } else if (e.swarm) {
-                    e.vx += Math.cos(a) * e.speed * 5 * dt;
-                    e.vy += Math.sin(a) * e.speed * 5 * dt;
+                    e.vx += Math.cos(a) * e.speed * 5 * dt * slowFactor;
+                    e.vy += Math.sin(a) * e.speed * 5 * dt * slowFactor;
                 } else if (e.formation) {
                     const orbit = a + Math.PI / 2;
                     const targetDist = 200;
                     const distFactor = (d - targetDist) / targetDist;
-                    e.vx += (Math.cos(a) * distFactor + Math.cos(orbit) * 0.8) * e.speed * 3 * dt;
-                    e.vy += (Math.sin(a) * distFactor + Math.sin(orbit) * 0.8) * e.speed * 3 * dt;
+                    e.vx += (Math.cos(a) * distFactor + Math.cos(orbit) * 0.8) * e.speed * 3 * dt * slowFactor;
+                    e.vy += (Math.sin(a) * distFactor + Math.sin(orbit) * 0.8) * e.speed * 3 * dt * slowFactor;
                 } else if (e.predictable) {
                     e.patternPhase += dt * 2;
                     const patternOffset = Math.sin(e.patternPhase) * Math.PI / 4;
                     const patternAngle = a + patternOffset;
-                    e.vx += Math.cos(patternAngle) * e.speed * 2.5 * dt;
-                    e.vy += Math.sin(patternAngle) * e.speed * 2.5 * dt;
+                    e.vx += Math.cos(patternAngle) * e.speed * 2.5 * dt * slowFactor;
+                    e.vy += Math.sin(patternAngle) * e.speed * 2.5 * dt * slowFactor;
                 } else {
                     const orbit = a + Math.PI / 2;
                     const targetDist = 300;
                     const distFactor = (d - targetDist) / targetDist;
-                    e.vx += (Math.cos(a) * distFactor + Math.cos(orbit) * 0.5) * e.speed * 3 * dt;
-                    e.vy += (Math.sin(a) * distFactor + Math.sin(orbit) * 0.5) * e.speed * 3 * dt;
+                    e.vx += (Math.cos(a) * distFactor + Math.cos(orbit) * 0.5) * e.speed * 3 * dt * slowFactor;
+                    e.vy += (Math.sin(a) * distFactor + Math.sin(orbit) * 0.5) * e.speed * 3 * dt * slowFactor;
                 }
                 const vel = Math.sqrt(e.vx * e.vx + e.vy * e.vy);
-                if (vel > e.speed) { e.vx = (e.vx / vel) * e.speed; e.vy = (e.vy / vel) * e.speed; }
+                if (vel > maxSpeed) { e.vx = (e.vx / vel) * maxSpeed; e.vy = (e.vy / vel) * maxSpeed; }
                 e.angle = a;
-                e.fireCooldown -= dt;
+                e.fireCooldown -= dt * slowFactor;
                 if (e.fireCooldown <= 0) {
                     e.fireCooldown = e.fireRate;
                     const ba = e.angle + (Math.random() - 0.5) * 0.15;
@@ -1752,10 +1771,12 @@ function updateBoss(e, dt, d) {
     e.vx += Math.cos(a) * distFactor * e.speed * 2 * dt;
     e.vy += Math.sin(a) * distFactor * e.speed * 2 * dt;
     const orbitAngle = a + Math.PI / 2;
-    e.vx += Math.cos(orbitAngle) * e.speed * 0.8 * dt;
-    e.vy += Math.sin(orbitAngle) * e.speed * 0.8 * dt;
+    const slowFactor = e.slowedTimer > 0 ? e.slowedFactor : 1;
+    const maxSpeed = e.speed * slowFactor;
+    e.vx += Math.cos(orbitAngle) * e.speed * 0.8 * dt * slowFactor;
+    e.vy += Math.sin(orbitAngle) * e.speed * 0.8 * dt * slowFactor;
     const vel = Math.sqrt(e.vx * e.vx + e.vy * e.vy);
-    if (vel > e.speed) { e.vx = (e.vx / vel) * e.speed; e.vy = (e.vy / vel) * e.speed; }
+    if (vel > maxSpeed) { e.vx = (e.vx / vel) * maxSpeed; e.vy = (e.vy / vel) * maxSpeed; }
     e.vx *= 0.96;
     e.vy *= 0.96;
     if (e.isFlagship) {
@@ -2306,6 +2327,105 @@ function updateMissileDrones(dt) {
                     }
                 }
             }
+        }
+    }
+}
+
+function updateSlowingDrones(dt) {
+    while (slowingDrones.length < player.slowingDroneCount) {
+        const angle = (slowingDrones.length / Math.max(1, player.slowingDroneCount)) * Math.PI * 2;
+        slowingDrones.push({
+            x: player.x + Math.cos(angle) * 100,
+            y: player.y + Math.sin(angle) * 100,
+            angle: 0, orbitAngle: angle
+        });
+    }
+    while (slowingDrones.length > player.slowingDroneCount) {
+        slowingDrones.pop();
+    }
+    for (let i = 0; i < slowingDrones.length; i++) {
+        const d = slowingDrones[i];
+        d.orbitAngle += dt * 0.45;
+        const targetX = player.x + Math.cos(d.orbitAngle) * 100;
+        const targetY = player.y + Math.sin(d.orbitAngle) * 100;
+        d.x += (targetX - d.x) * 5 * dt;
+        d.y += (targetY - d.y) * 5 * dt;
+
+        let target = null;
+        let minDist = Infinity;
+        for (const e of enemies) {
+            if (!e.alive) continue;
+            const ed = dist(d, e);
+            if (ed < minDist && ed <= player.slowingDroneRange) {
+                minDist = ed;
+                target = e;
+            }
+        }
+        if (target) {
+            d.angle = Math.atan2(target.y - d.y, target.x - d.x);
+        }
+    }
+    if (player.slowingDroneCount > 0) {
+        slowingDroneShootTimer += dt;
+        if (slowingDroneShootTimer >= player.slowingDroneFireRate) {
+            slowingDroneShootTimer = 0;
+            for (const d of slowingDrones) {
+                let target = null;
+                let minDist = Infinity;
+                for (const e of enemies) {
+                    if (!e.alive) continue;
+                    const ed = dist(d, e);
+                    if (ed < minDist && ed <= player.slowingDroneRange) {
+                        minDist = ed;
+                        target = e;
+                    }
+                }
+                if (target) {
+                    const a = Math.atan2(target.y - d.y, target.x - d.x);
+                    slowingShots.push({
+                        x: d.x + Math.cos(a) * 10,
+                        y: d.y + Math.sin(a) * 10,
+                        vx: Math.cos(a) * 280,
+                        vy: Math.sin(a) * 280,
+                        target,
+                        life: 2.5,
+                        owner: 'player',
+                        color: '#66ccff',
+                        size: 3
+                    });
+                }
+            }
+        }
+    }
+}
+
+function updateSlowingShots(dt) {
+    for (let i = slowingShots.length - 1; i >= 0; i--) {
+        const s = slowingShots[i];
+        s.life -= dt;
+        if (s.life <= 0) {
+            slowingShots.splice(i, 1);
+            continue;
+        }
+        if (s.target && s.target.alive) {
+            const a = Math.atan2(s.target.y - s.y, s.target.x - s.x);
+            const turnRate = 4.5;
+            const currentAngle = Math.atan2(s.vy, s.vx);
+            let angleDiff = a - currentAngle;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            const newAngle = currentAngle + Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), turnRate * dt);
+            const speed = Math.sqrt(s.vx * s.vx + s.vy * s.vy);
+            s.vx = Math.cos(newAngle) * speed;
+            s.vy = Math.sin(newAngle) * speed;
+        }
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        if (s.target && s.target.alive && dist(s, s.target) < s.target.size + 6) {
+            s.target.slowedTimer = 2.5;
+            s.target.slowedFactor = player.slowingDroneSlowFactor;
+            spawnExplosion(s.x, s.y, 8, '#66ccff', 80, 0.25);
+            slowingShots.splice(i, 1);
         }
     }
 }
@@ -3031,6 +3151,68 @@ function drawMissiles() {
     }
 }
 
+function drawSlowingDrones() {
+    for (const d of slowingDrones) {
+        const sx = d.x - camera.x;
+        const sy = d.y - camera.y;
+        if (sx < -50 || sx > canvas.width + 50 || sy < -50 || sy > canvas.height + 50) continue;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(d.angle);
+        ctx.shadowColor = '#66ccff';
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.moveTo(8, 0);
+        ctx.lineTo(-5, -5);
+        ctx.lineTo(-3, 0);
+        ctx.lineTo(-5, 5);
+        ctx.closePath();
+        ctx.fillStyle = '#0a1a2a';
+        ctx.fill();
+        ctx.strokeStyle = '#66ccff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.globalAlpha = 0.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 12, 0, Math.PI * 2);
+        ctx.strokeStyle = '#66ccff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function drawSlowingShots() {
+    for (const s of slowingShots) {
+        const sx = s.x - camera.x;
+        const sy = s.y - camera.y;
+        if (sx < -20 || sx > canvas.width + 20 || sy < -20 || sy > canvas.height + 20) continue;
+        const angle = s.target && s.target.alive
+            ? Math.atan2(s.target.y - s.y, s.target.x - s.x)
+            : Math.atan2(s.vy, s.vx);
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(angle);
+        ctx.shadowColor = '#66ccff';
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = '#4dd3ff';
+        ctx.strokeStyle = '#d7f7ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.rect(-s.size * 2.2, -s.size * 0.7, s.size * 4.4, s.size * 1.4);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(s.size * 1.4, 0, s.size * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
 function drawBullets() {
     for (const b of bullets) {
         const sx = b.x - camera.x;
@@ -3389,6 +3571,8 @@ function gameLoop(time) {
         updateDrones(dt);
         updatePiercingDrones(dt);
         updateMissileDrones(dt);
+        updateSlowingDrones(dt);
+        updateSlowingShots(dt);
         updateMissiles(dt);
         updateAllies(dt);
         updateConstantEnemySpawn(dt);
@@ -3428,6 +3612,8 @@ function gameLoop(time) {
     drawDrones();
     drawPiercingDrones();
     drawMissileDrones();
+    drawSlowingDrones();
+    drawSlowingShots();
     drawMissiles();
     drawAllies();
     drawBullets();
@@ -3624,7 +3810,15 @@ function initGame() {
     player.missileDroneCount = 0;
     player.missileDroneMissilesPerShot = 1;
     player.missileDroneFireRate = 4;
+    player.slowingDroneCount = 0;
+    player.slowingDroneFireRate = 2;
+    player.slowingDroneSlowFactor = 0.5;
+    player.slowingDroneRange = 400;
     player.missileDamage = 40;
+    player.slowingDroneCount = 0;
+    player.slowingDroneFireRate = 2;
+    player.slowingDroneSlowFactor = 0.5;
+    player.slowingDroneRange = 400;
     player.healthRegen = 1;
     player.lifesteal = 0;
     player.chargeDamage = 0;
@@ -3653,6 +3847,9 @@ function initGame() {
     drones = []; droneShootTimer = 0;
     piercingDrones = []; piercingDroneShootTimer = 0;
     missileDrones = []; missileDroneShootTimer = 0;
+    slowingDrones = []; slowingDroneShootTimer = 0;
+    slowingDrones = []; slowingDroneShootTimer = 0;
+    slowingShots = [];
     missiles = [];
     allies = [];
     explorationSites = [];
